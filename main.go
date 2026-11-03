@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"net" //package provides networking functionality in Go
 	"os"
-	"strings" //helps us clean the username
+	"strings" 
 	"sync" //provides synchronization tools
+	"time" //provides date and time func
 )
 
 type Client struct{
@@ -17,6 +18,7 @@ type Client struct{
 
 var clients []Client //slice to store the connected clients
 var clientMutex sync.Mutex //mutex to synchronize access to the clients slice
+var messageHistory []string //slice to store previous chat messages
 
 func main() {
 	port := "8989" //set the default port by choice
@@ -82,48 +84,83 @@ func handleClient(conn net.Conn){
 		conn: conn,
 	}
 
-	//add the new client to the clients slice
 	clientMutex.Lock()
+
+	//check if the server already has 10 clients
+	if len(clients) >= 10 {
+		clientMutex.Unlock()
+		conn.Write([]byte("Chat is full. Try again later.\n"))
+		return
+	}
+
+	//add the new client to the clients slice
 	clients = append(clients, newClient)
+
+	//send previous messages to the new client
+	for _, message := range messageHistory {
+		_, err := conn.Write([]byte(message + "\n"))
+		if err != nil {
+			fmt.Println("error sending history:", err)
+			break
+		}
+	}
+
 	clientMutex.Unlock()
 
-	buffer := make([]byte, 1024) 
+	broadcasting("[" + name + "] has joined our chat...") //annouce that a new client joined
+
 	//now we need to read the data send by the client into the buffer
 	for{
-		n, err := conn.Read(buffer)
+		//read the message using the same reader
+		messg, err := reader.ReadString('\n')
+
 		//check if reading failed
 		if err != nil {
 			fmt.Println("error", err)
 			break
-			//return : exits the entire function
-			//break : exits only the current loop
 		}
 
-		messg := string(buffer[:n])//convert only the received bytes ino readable text
+		//remove spaces and newline
+		messg = strings.TrimSpace(messg)
 
-		//then we display the message received from the client
-		fmt.Println("msg :", messg)
+		//don't broadcast empty messages
+		if messg == "" {
+			continue
+		}
 
-		broadcasting("[" + name + "]: " + messg) //send the message to all connected clients
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		broadcasting("[" + timestamp + "][" + name + "]: " + messg)
 	}
 }
 
 //now a disconected client from the client slice
 func removeClient (conn net.Conn){
-	clientMutex.Lock()
+    clientMutex.Lock()
 
-	for i, client:= range clients {
-		if client.conn == conn {
-			clients = append(clients[:i], clients[i+1:]...)
-			break
-		}
-	}
+    var name string //store the username of the disconnected client
 
-	clientMutex.Unlock()
+    for i, client:= range clients {
+        if client.conn == conn {
+            name = client.name //get the client's username
+            clients = append(clients[:i], clients[i+1:]...)
+            break
+        }
+    }
+
+    clientMutex.Unlock()
+
+    //announce that the client left
+    if name != "" {
+        broadcasting("[" + name + "] has left our chat...")
+    }
 }
 
 func broadcasting(message string){
 	clientMutex.Lock() 
+
+	//save the message in history
+	messageHistory = append(messageHistory, message)
+
 	//after the mutex we can safly iterate through every connected client
 	for _, client := range clients {
 		//send the message to this client
@@ -132,5 +169,6 @@ func broadcasting(message string){
 			fmt.Println("error", err)
 		}
 	}
+
 	clientMutex.Unlock() 
 }
