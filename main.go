@@ -9,6 +9,7 @@ import (
 	"strings" 
 	"sync" //provides synchronization tools
 	"time" //provides date and time func
+	"strconv"//convert string to int
 )
 
 type Client struct{
@@ -27,6 +28,14 @@ func main() {
 		port = os.Args[1]
 	} else if len(os.Args) > 2 {
 		fmt.Println("[USAGE]: ./TCPChat $port")
+		return
+	}
+
+	//we should validate the port before calling net.Listen
+	portNumber, err := strconv.Atoi(port)
+	//check if the port is valid or outside the valid range
+	if err != nil || portNumber < 1 || portNumber > 65535{
+		fmt.Println("[USAGE]: ./TCPchat $port")
 		return
 	}
 
@@ -72,6 +81,12 @@ func handleClient(conn net.Conn){
 	//remove spaces and the newline from the username
 	name = strings.TrimSpace(name)
 
+	//the username shouldnt be too long lets do max 20char
+	if len(name) > 20{
+		conn.Write([]byte("username must be 20 char max"))
+		return
+	}
+
 	//check if the username is empty
 	if name == "" {
 		fmt.Println("empty username")
@@ -95,6 +110,16 @@ func handleClient(conn net.Conn){
 
 	//add the new client to the clients slice
 	clients = append(clients, newClient)
+
+	//we need to see if the username is already taken
+	for _, client := range clients{ //loop through connected clients
+		if client.name == name{ //compare usernames
+			clientMutex.Unlock() //release the mutex 
+			conn.Write([]byte("username already taken.\n"))
+			return //stop handling this connection
+
+		}
+	}
 
 	//send previous messages to the new client
 	for _, message := range messageHistory {
@@ -155,20 +180,21 @@ func removeClient (conn net.Conn){
     }
 }
 
-func broadcasting(message string){
-	clientMutex.Lock() 
+func broadcasting(message string) {
+    clientMutex.Lock() //lock shared data
 
-	//save the message in history
-	messageHistory = append(messageHistory, message)
+    messageHistory = append(messageHistory, message) //save message in history
 
-	//after the mutex we can safly iterate through every connected client
-	for _, client := range clients {
-		//send the message to this client
-		_, err := client.conn.Write([]byte(message + "\n"))
-		if err != nil{
-			fmt.Println("error", err)
-		}
-	}
+    activeClients := make([]Client, len(clients)) //create a copy of the clients
+    copy(activeClients, clients) //copy connected clients
 
-	clientMutex.Unlock() 
+    clientMutex.Unlock() //unlock before sending messages
+
+    for _, client := range activeClients { //loop through copied clients
+        _, err := client.conn.Write([]byte(message + "\n")) //send message
+
+        if err != nil { //check if sending failed
+            fmt.Println("Error sending message to", client.name, ":", err)
+        }
+    }
 }
